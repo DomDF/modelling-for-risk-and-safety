@@ -1,0 +1,52 @@
+---
+title: "experimental design"
+subtitle: "modelling workflow for risk and safety"
+author: "Dom Di Francesco"
+institute: "prepared for the Health & Safety Executive, Science Division"
+date: "2025-02-13"
+date-format: "DD MMM YYYY"
+format: 
+  revealjs:
+    theme: [default, ../DomDF.scss]
+    slide-number: true
+    code-copy: true
+    code-block-bg: true
+    code-overflow: scroll
+    highlight-style: github-dark
+    code-tools: true
+    code-fold: show
+    background-transition: fade
+    transition-speed: slow
+    scrollable: true
+    preview-links: true
+title-slide-attributes:
+  data-background-image: ../../figures/background.png
+  data-background-size: cover
+  data-background-opacity: "0.2"
+from: markdown+emoji
+embed-resources: true
+self-contained-math: true
+execute:
+  echo: true
+  warning: false
+---
+
+```{r setup, include=FALSE}
+#| label: setup
+#| message: false
+library(reticulate)
+
+library(JuliaCall); julia_setup()
+Sys.setenv(JULIA_NUM_THREADS = "8")
+```
+
+
+## application: targetted data collection
+
+knowing what we know, where and when should we plan to next collect data?
+
+![planning the next test](../../figures/discussion.png)
+
+## a survival model
+
+

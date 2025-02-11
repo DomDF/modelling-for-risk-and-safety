@@ -1,0 +1,371 @@
+---
+title: "probabilistic programming"
+subtitle: "modelling workflow for risk and safety"
+author: "Dom Di Francesco"
+institute: "prepared for the Health & Safety Executive, Science Division"
+date: "2025-02-13"
+date-format: "DD MMM YYYY"
+format: 
+  revealjs:
+    theme: [default, ../DomDF.scss]
+    slide-number: true
+    code-copy: true
+    code-block-bg: true
+    code-overflow: scroll
+    highlight-style: github-dark
+    code-tools: true
+    code-fold: show
+    background-transition: fade
+    transition-speed: slow
+    scrollable: true
+    preview-links: true
+title-slide-attributes:
+  data-background-image: ../../figures/background.png
+  data-background-size: cover
+  data-background-opacity: "0.2"
+from: markdown+emoji
+embed-resources: true
+self-contained-math: true
+execute:
+  echo: true
+  warning: false
+---
+
+```{r setup, include=FALSE}
+#| label: setup
+#| message: false
+library(reticulate)
+
+library(JuliaCall); julia_setup()
+Sys.setenv(JULIA_NUM_THREADS = "8")
+```
+
+## overview
+
+  - introduction to PPLs
+  - modelling workflow:
+    - prior checks
+    - sampling diagnostics
+    - model evaluation
+    - experimental design
+  - ...if we have time:
+    - measurement error 
+    - mixture models
+    - hierarchical models
+
+## from `BUGS`/`JAGS` to `Stan`
+
+  - Gibbs sampling:
+    - draw samples from one parameter at a time
+    - helpful when Metropolis-Hastings is rejecting proposals
+  
+  - Hamiltonian Monte Carlo:
+    - uses gradient of log-posterior and Hamiltonian dynamics analogy
+    - samples from all *continuous* parameters jointly and efficiently
+    - extended to No-U-Turn Sampler (NUTS) in `Stan`, which tunes hyperparameters during warmup!
+  
+  - [link to a fun demo](https://chi-feng.github.io/mcmc-demo/app.html){target="_blank"}
+
+## from `BUGS`/`JAGS` to `Stan`
+
+![Hoffman, M.D., Gelman, A., 'The No-U-Turn Sampler', JMLR, 2014](../../figures/Hoffman.png)
+
+## from `BUGS`/`JAGS` to `Stan`
+
+ - [documentation](https://mc-stan.org)
+ - [online help](https://discourse.mc-stan.org)
+ - [help for `BUGS` users](https://mc-stan.org/docs/stan-users-guide/for-bugs-users.html)
+
+StanCon anyone?
+
+## corrosion rates
+
+![looking for evidence of active corrosion growth](../../figures/corrosion.png)
+
+## corrosion rates
+
+### loading data
+
+:::{.panel-tabset}
+
+## `R`
+
+```{r}
+library(tidyverse)
+
+corrosion_data <- read_csv("../../data/corrosion.csv")
+head(corrosion_data, 3)
+```
+
+## `Python`
+
+```{python}
+import polars as pl
+
+corrosion_data = pl.read_csv("../../data/corrosion.csv")
+corrosion_data.head(3)
+```
+
+## `Julia`
+
+```{julia}
+#| output: false
+
+using CSV, DataFrames
+
+corrosion_data = CSV.read("../../data/corrosion.csv", DataFrame)
+first(corrosion_data, 3)
+```
+```{julia}
+#| echo: false
+first(corrosion_data, 3)
+
+```
+
+:::
+
+## PPLs
+
+'democratising scalable UQ' ...once installed :thinking:
+
+:::{.panel-tabset}
+
+## `Stan` (via `CmdStanR`)
+
+```{r}
+library(cmdstanr)
+
+cmdstanr::cmdstan_version()
+```
+
+## `Stan` (via `CmdStanPy`)
+
+```{python}
+import cmdstanpy
+
+cmdstanpy.cmdstan_version()
+```
+
+## `Turing.jl`
+
+```{julia}
+using Turing, Pkg
+
+Pkg.status("Turing")
+```
+
+:::
+
+## a corrosion growth rate model
+
+```{=tex}
+\begin{aligned}
+& \Delta C = \frac{C_{j} - C_{i}}{\Delta t_{i \rightarrow j}} \\
+
+\\
+
+& \Delta C \sim N(\mu, \sigma^2)
+\end{aligned}
+```
+:::{.panel-tabset}
+
+## `CmdStanR`
+
+```{r}
+cgr_model <- cmdstan_model(stan_file = "corrosion_growth.stan")
+
+cgr_model$format()
+```
+
+## `CmdStanPy`
+```{python}
+cgr_model = cmdstanpy.CmdStanModel(stan_file="corrosion_growth.stan")
+
+stan_code = cgr_model.code()
+
+from pygments import highlight
+from pygments.lexers import StanLexer
+from pygments.formatters import NullFormatter
+
+formatted_stan_code = highlight(stan_code, StanLexer(), NullFormatter())
+
+print(formatted_stan_code)
+```
+
+## `Turing.jl`
+```{julia}
+#| output: false
+@model function corrosion_growth(cgr)
+    # priors
+    μ ~ Normal(0, 2) |> d -> truncated(d, lower = 0)
+    σ ~ Exponential(1)
+    
+    # model
+    for i in eachindex(cgr)
+        cgr[i] ~ Normal(μ, σ) |> d -> truncated(d, lower = 0)
+    end
+
+    # Turing automatically keeps track of log-likelihoods 🏆 
+    
+end
+```
+
+:::
+
+## running the model
+
+:::{.panel-tabset}
+
+## `CmdStanR`
+
+`CmdStanR` needs it's input data as a list
+
+```{r}
+
+prepare_data <- function(df = corrosion_data) {
+  df |>
+    arrange(anomaly_id, T) |>
+    group_by(anomaly_id) |>
+    mutate(
+      next_depth = lead(measured_depth_mm),
+      time_diff = lead(T) - T
+    ) |>
+    filter(!is.na(next_depth)) |>
+    mutate(
+      delta_C = (next_depth - measured_depth_mm) / time_diff
+    ) |>
+    select(anomaly_id, delta_C, soil_type) |>
+    ungroup()
+}
+
+model_data <- list(
+  n_anomalies = prepare_data()$anomaly_id |> unique() |> length(),
+  n_inspections = 2,
+  cgr = prepare_data()$delta_C
+)
+
+cgr_post <- cgr_model$sample(data = model_data)
+
+```
+
+## `CmdStanPy`
+
+`CmdStanPy` needs it's input data as a dictionary
+
+```{python}
+def prepare_data(df = corrosion_data):
+    return (
+        df.sort(['anomaly_id', 'T'])
+        .group_by('anomaly_id')
+        .agg([
+            pl.col('measured_depth_mm').shift(-1).alias('next_depth'),
+            pl.col('T').shift(-1).alias('next_time'),
+            pl.col('measured_depth_mm'),
+            pl.col('T')
+        ])
+        .filter(pl.col('next_depth').is_not_null())
+        .with_columns([
+            ((pl.col('next_depth') - pl.col('measured_depth_mm')) / 
+             (pl.col('next_time') - pl.col('T'))).alias('delta_C')
+        ])
+        .select(['anomaly_id', 'delta_C'])
+        .explode('delta_C')  # Add this line to unnest the lists
+        .filter(pl.col('delta_C').is_not_null())  # Optional: remove null values if any
+    )
+
+model_data = {
+        'n_anomalies': prepare_data().select('anomaly_id').unique().height,
+        'n_inspections': 2,
+        'cgr': prepare_data().select('delta_C').to_series().to_numpy()
+    }
+
+cgr_post = cgr_model.sample(data = model_data)
+
+```
+
+## `Turing.jl`
+
+A `Turing` model needs it's input data as arguments to the model function
+
+```{julia}
+#| output: false
+function prepare_data(df::DataFrame = corrosion_data)
+    sorted_df = sort(df, [:anomaly_id, :T]); result = DataFrame()
+    
+    for group in groupby(sorted_df, :anomaly_id)
+        if nrow(group) > 1
+            for i in 1:(nrow(group)-1)
+                Δc = (group[i+1, :measured_depth_mm] - group[i, :measured_depth_mm]) / (group[i+1, :T] - group[i, :T])
+                push!(result, (
+                    anomaly_id = group[i, :anomaly_id], Δc = max(0, Δc)
+                ))
+            end
+        end
+    end
+    
+    return result
+end
+
+cgr_post = prepare_data().Δc |> 
+  data -> corrosion_growth(data) |>
+  model -> sample(model, NUTS(), 1_000)
+
+```
+
+:::
+
+## taking a look
+
+```{r}
+#| echo: false
+
+cgr_post |> DomDF::tidy_mcmc_draws(params = c("mu", "sigma")) |>
+  mutate(Chain = as_factor(Chain)) |>
+  pivot_wider(names_from = Parameter) |>
+  ggplot(mapping = aes(x = mu, y = sigma)) +
+    geom_point(size = 2, alpha = 0.4, mapping = aes(color = Chain))+
+    labs(x = "mean corrosion rate, mm/yr", y = "standard deviation of corrosion rate, mm/yr") +
+    scale_color_viridis_d() +
+    theme_minimal(base_size = 12, base_family = "Atkinson Hyperlegible")+
+    theme(legend.position = "top")
+
+```
+
+## up and running with PPLs {.text-center}
+
+![success](../../figures/success.png)
+
+next up: how we can extend this to a robust and helpful workflow 
+
+## break? {.text-center}
+
+![:coffee:](../../figures/coffee_break.png)
+
+
+## comparisons in `Turing.jl`
+
+```{julia}
+#| output: false
+
+n_draws = 1_000; n_chains = 4
+
+# a no U-turn sampler, with 2000 adaptive steps and a target acceptance rate of 0.65
+NUTS_sampler = NUTS(2_000, 0.65)
+
+# a Hamiltonian Monte Carlo sampler, with a step size of 0.05 and 10 leapfrog steps
+HMC_sampler = HMC(0.05, 10)
+
+# a Metropolis-Hastings sampler, using the default proposal distribution (priors)
+MH_sampler = MH()
+
+# a 'compositional' Gibbs sampler (Metropolis within Gibbs) - sampling μ with MH and σ with NUTS
+Gibbs_sampler = Gibbs(MH(:μ), NUTS(2_000, 0.65, :σ))
+
+run_mcmc = function(sampler)
+    return prepare_data().Δc |> 
+      data -> corrosion_growth(data) |>
+      model -> sample(model, sampler, MCMCThreads(), n_draws, n_chains)
+end
+
+```
+

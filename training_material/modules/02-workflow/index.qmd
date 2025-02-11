@@ -1,0 +1,394 @@
+---
+title: "a Bayesian workflow"
+subtitle: "modelling workflow for risk and safety"
+author: "Dom Di Francesco"
+institute: "prepared for the Health & Safety Executive, Science Division"
+date: "2025-02-13"
+date-format: "DD MMM YYYY"
+format: 
+  revealjs:
+    theme: [default, ../DomDF.scss]
+    slide-number: true
+    code-copy: true
+    code-block-bg: true
+    code-overflow: scroll
+    highlight-style: github-dark
+    code-tools: true
+    code-fold: show
+    background-transition: fade
+    transition-speed: slow
+    scrollable: true
+    preview-links: true
+title-slide-attributes:
+  data-background-image: ../../figures/background.png
+  data-background-size: cover
+  data-background-opacity: "0.2"
+from: markdown+emoji
+embed-resources: true
+self-contained-math: true
+execute:
+  echo: true
+  warning: false
+---
+
+
+## suggested workflow
+
+![Gelman, A. et al, 'Bayesian Workflow', 2020, arXiv:2011.01808](../../figures/workflow.png)
+
+## suggested workflow
+
+![a book in 2025? - https://sites.stat.columbia.edu/gelman/workflow-book/](../../figures/book.png)
+
+
+```{r setup, include=FALSE}
+#| label: setup
+#| message: false
+library(reticulate)
+
+library(JuliaCall); julia_setup()
+Sys.setenv(JULIA_NUM_THREADS = "8")
+```
+
+## inspection PoD
+
+![looking for damage](../../figures/inspection.png)
+
+## inspection PoD: prior checks
+
+```{=tex}
+\begin{align}
+\textrm{indication} &\sim \text{Bernoulli}(p_i) \\ \\
+\textrm{logit}(p_i) &= \alpha + \beta_{d} \times d \\
+\end{align}
+
+```
+
+   - We want to infer: $\alpha$, and $\beta_{d}$
+   - We can add priors to:
+     - align plausible outcomes with scientific knowledge
+     - provide regularisation (and improve predictive performance)
+   - ...but how can we select them?
+
+## inspection PoD: prior checks
+
+### load some data
+
+:::{.panel-tabset}
+
+## `R`
+
+```{r}
+library(tidyverse)
+
+poi_data <- read_csv("../../data/poi.csv")
+head(poi_data, 3)
+```
+
+## `Python`
+
+```{python}
+import polars as pl
+
+poi_data = pl.read_csv("../../data/poi.csv")
+poi_data.head(3)
+```
+
+## `Julia`
+
+```{julia}
+using CSV, DataFrames
+
+poi_data = CSV.read("../../data/poi.csv", DataFrame)
+first(poi_data, 3)
+```
+
+:::
+
+## inspection PoD: prior checks
+
+[link to a shiny app](https://domdf.shinyapps.io/Shiny_apps/)
+
+## inspection PoD: prior checks
+
+```{r}
+#| echo: false
+set.seed(123)
+
+n_samples <- 100
+
+x <- seq(0, 10, length.out = 100)
+
+prior_samples <- tibble(
+  sample_id = 1:n_samples,
+  alpha = rnorm(n_samples, -6, sqrt(2)),
+  beta = rnorm(n_samples, 3/2, sqrt(1/2))
+)
+
+curves <- crossing(
+  prior_samples,
+  tibble(x = x)
+) |>
+  mutate(p = plogis(alpha + beta * x))
+
+ggplot(curves, aes(x = x, y = p, group = sample_id)) +
+  geom_line(alpha = 0.1, color = "blue") +
+  labs(
+    x = "damage depth, mm",
+    y = "(prior) probability of indication",
+    subtitle = "alpha ~ N(-6, 2), beta_d ~ N(3/2, 1/2)"
+  ) +
+  theme_minimal(base_size = 14, base_family = "Atkinson Hyperlegible")
+```
+
+## inspection PoD: sampling
+
+:::{.panel-tabset}
+
+## `CmdStanR`
+```{r}
+library(cmdstanr)
+
+pod_model <- cmdstan_model(stan_file = "pod.stan")
+pod_model$format()
+```
+
+## `CmdStanPy`
+```{python}
+import cmdstanpy
+
+pod_model = cmdstanpy.CmdStanModel(stan_file="pod.stan")
+
+stan_code = pod_model.code()
+
+from pygments import highlight
+from pygments.lexers import StanLexer
+from pygments.formatters import NullFormatter
+
+formatted_stan_code = highlight(stan_code, StanLexer(), NullFormatter())
+
+print(formatted_stan_code)
+
+```
+
+## `Turing.jl`
+```{julia}
+#| output: false
+
+using Turing
+using StatsFuns: logistic
+
+@model function pod_model(depth::Vector{Float64}, indication::Vector{Bool})
+    # priors
+    α ~ Normal(-6, 2)
+    β_depth ~ Normal(1.5, 0.5)
+    
+    # likelihood
+    for i in 1:length(indication)
+        logit_p = α + β_depth * depth[i]
+        indication[i] ~ Bernoulli(logistic(logit_p))
+    end
+    
+end
+```
+
+:::
+
+## inspection PoD: sampling
+
+we can specify some additional arguments to the `sample` method:
+
+:::{.panel-tabset}
+
+## `CmdStanR`
+```{r}
+model_data <- list(
+  n_trials = nrow(poi_data),
+  depth = poi_data$depth_mm,
+  indication = poi_data$indication |> as.integer()
+)
+
+pod_fit <- pod_model$sample(
+  data = model_data,
+  chains = 4, 
+  parallel_chains = parallel::detectCores(),
+  iter_warmup = 2000,
+  iter_sampling = 2000,
+  seed = 231123
+)
+```
+
+## `CmdStanPy`
+```{python}
+import multiprocessing
+
+model_data = {
+    "n_trials": len(poi_data),
+    "depth": poi_data["depth_mm"].to_list(),
+    "indication": [int(x) for x in poi_data["indication"].to_list()]
+}
+
+pod_fit = pod_model.sample(
+  data = model_data, 
+  chains = 4, 
+  parallel_chains = multiprocessing.cpu_count(),
+  iter_warmup = 2000, 
+  iter_sampling = 2000, 
+  seed = 231123
+  )
+```
+
+## `Turing.jl`
+```{julia}
+#| output: false
+using Random
+
+n_draws = 2_000; n_chains = 4
+
+pod_fit = pod_model(poi_data.depth_mm, poi_data.indication) |>
+  model -> sample(MersenneTwister(231123), model, NUTS(), MCMCThreads(), n_draws, n_chains)
+```
+
+:::
+
+## inspection PoD: sampling
+
+![things can go wrong](../../figures/errors.png)
+
+## inspection PoD: sampling
+
+as well as graphical checks (suchas traceplots) some metrics have also been developed:
+
+- **R-hat**: a measure of *convergence*. Considers the variance within and between chains. We want this to be close to $1.0$, which would indicate that all chains have converged to the same distribution.
+ 
+- **ESS**: a measure of *autocorrelation*. Approximate number of equivalent independent samples. We want this to be high (comparable to the number of samples).
+
+## inspection PoD: sampling
+
+:::{.panel-tabset}
+
+## `CmdStanR`
+```{r}
+pod_fit$summary()
+```
+
+## `CmdStanPy`
+```{python}
+pod_fit.summary()
+```
+
+## `Turing.jl`
+```{julia}
+pod_fit
+```
+
+:::
+
+## scoring models
+
+![it worked, but is it good?](../../figures/thoughtful.png)
+
+## scoring models
+
+ - cross-validation:
+   - out of sample log likelihoods
+   - K-Fold CV
+   - LOO CV
+ - approximations:
+   - WAIC
+   - PSIS-LOO
+  
+## scoring models
+
+The larger (or less negative) the value of expected log pointwise predictive density (elpd), the better predictive performance of the model.
+
+:::{.panel-tabset}
+
+## `CmdStanR`
+```{r}
+pod_fit$loo(variables = "log_lik")
+```
+
+## `CmdStanPy`
+```{python}
+
+# ...
+
+```
+
+## `Turing.jl`
+```{julia}
+using ParetoSmooth
+
+pod_model(poi_data.depth_mm, poi_data.indication) |>
+  model -> psis_loo(model, pod_fit)
+
+```
+
+:::
+
+## scoring models
+
+can we do any better if we include include damage length?
+
+:::{.panel-tabset}
+
+## a second model
+
+```{r}
+
+pod_2d_model <- cmdstan_model(stan_file = "pod_2d.stan")
+
+pod_2d_model$format()
+```
+
+## running and scoring
+```{r}
+#| echo: false
+
+model_data_2d <- list(
+  n_trials = nrow(poi_data),
+  depth = poi_data$depth_mm,
+  length = poi_data$length_mm,
+  indication = poi_data$indication |> as.integer()
+)
+
+pod_2d_fit <- pod_2d_model$sample(
+  data = model_data_2d,
+  chains = 4, 
+  parallel_chains = parallel::detectCores(),
+  iter_warmup = 2000,
+  iter_sampling = 2000,
+  seed = 231123
+)
+
+get_loo_score_table <- function(model){
+  loo_res <- model$loo()
+  loo_res$estimates |> 
+    as_tibble() |> 
+    mutate(var = c("elpd_loo", "p_loo", "looic"))
+}
+
+model_comp <- bind_rows(
+  get_loo_score_table(pod_fit) |> mutate(model = "depth only"),
+  get_loo_score_table(pod_2d_fit) |> mutate(model = "depth and length")
+) 
+```
+
+## plotting
+
+```{r}
+#| echo: false
+ggplot(data = model_comp |> filter(var == "elpd_loo") |> mutate(model = as_factor(model)))+
+  geom_pointrange(mapping = aes(x = model, y = Estimate, ymin = Estimate - SE, ymax = Estimate + SE, shape = "elpd ± 1 s.e."), size = 3/2, fill = "white") +
+  scale_shape_manual(values = c(21)) +
+  labs(x = "model", y = "model score", shape = "") +
+  theme_minimal(base_size = 14, base_family = "Atkinson Hyperlegible")+
+  theme(legend.position = "top")
+```
+
+:::
+
+## break? {.text-center}
+
+![:coffee:](../../figures/coffee_break.png)

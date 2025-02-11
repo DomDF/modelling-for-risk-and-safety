@@ -1,0 +1,186 @@
+/*-- scss:defaults --*/
+
+// Import fonts
+@import url('https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@300;400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600;700&display=swap');
+
+// Core colors
+$primary-color: #2a76dd;
+$secondary-color: #f5bd30;
+$background-color: #1e2a38; // Changed to a dull blue
+$accent-color: #ff4d4d;
+$success-color: #00c853;
+
+// Typography
+$font-family-sans-serif: "Atkinson Hyperlegible", sans-serif;
+$font-family-monospace: "Fira Code", monospace;
+$font-size-base: 28px;
+
+// Theme overrides
+$body-bg: $background-color;
+$body-color: #ffffff;
+$link-color: $primary-color;
+$code-color: $secondary-color;
+$presentation-heading-font: $font-family-sans-serif;
+$presentation-font-size-root: $font-size-base;
+
+/*-- scss:rules --*/
+
+.reveal {
+  // Enhanced heading styles
+  h1, h2, h3, h4, h5, h6 {
+    font-family: $presentation-heading-font;
+    font-weight: 400; // Made thinner
+    margin-bottom: 0.5em;
+    
+    // Subtle text shadow for depth
+    text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.2);
+
+    // Gradient underline effect
+    &::after {
+      content: '';
+      display: block;
+      width: 100%;
+      height: 2px;
+      background: linear-gradient(90deg, $primary-color, transparent);
+      margin-top: 0.2em;
+    }
+  }
+
+  .reveal figure {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center; /* Ensures text alignment */
+  }
+  
+  .reveal figure img {
+    display: block;
+    margin: auto;
+  }
+  
+  .reveal figure figcaption {
+    text-align: center !important;
+    display: block;
+    font-style: italic; /* Optional: makes captions stand out */
+    width: 100%; /* Ensures centering even for long captions */
+  }
+  
+  .reveal pre code {
+    position: relative;
+  }
+  
+  .reveal .code-toolbar {
+    position: relative;
+  }
+  
+  .reveal .code-toolbar .copy-to-clipboard-button {
+    position: absolute;
+    top: 0;
+    right: 0;
+    background: rgba(0, 0, 0, 0.5);
+    color: white;
+    border: none;
+    padding: 5px;
+    cursor: pointer;
+  }  
+  
+  // Enhanced slide text
+  .slide {
+    font-size: $font-size-base;
+    line-height: 1.5;
+    
+    // Smooth fade-in animation for slide content
+    > * {
+      opacity: 0;
+      animation: fadeIn 0.5s ease-out forwards;
+    }
+  }
+
+  // Enhanced code blocks
+  pre {
+    code {
+      font-family: $font-family-monospace;
+      background-color: lighten($background-color, 5%);
+      padding: 1em;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      
+      // Enable font ligatures for Fira Code
+      font-variant-ligatures: discretionary-ligatures;
+      text-rendering: optimizeLegibility;
+    }
+  }
+
+  code {
+    font-family: $font-family-monospace;
+    background-color: lighten($background-color, 10%);
+    padding: 0.2em 0.4em;
+    border-radius: 4px;
+    font-size: 0.9em;
+    font-variant-ligatures: discretionary-ligatures;
+    text-rendering: optimizeLegibility;
+  }
+
+
+  // Enhanced footer
+  .footer {
+    font-size: 0.35em !important;
+    text-align: right !important;
+    padding: 0.8em 1.5em;
+    background-color: rgba($background-color, 0.8) !important;
+    backdrop-filter: blur(10px);
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  // Enhanced blockquotes
+  blockquote {
+    border-left: 4px solid $primary-color;
+    background-color: rgba($primary-color, 0.1);
+    margin: 1em 0;
+    padding: 0.5em 1em;
+    font-style: italic;
+  }
+
+  // Enhanced lists
+  ul, ol {
+    li {
+      margin: 0.5em 0;
+      &::marker {
+        color: $primary-color;
+      }
+    }
+  }
+}
+
+// Custom section header
+.sectionhead {
+  font-size: 1em;
+  color: $secondary-color;
+  background-color: rgba($background-color, 0.9);
+  padding: 0.8em 1.2em;
+  border-left: 5px solid $secondary-color;
+  position: absolute;
+  top: 1em;
+  right: 1em;
+  border-radius: 0 4px 4px 0;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+// Utility classes
+.highlight {
+  color: $accent-color;
+  font-weight: bold;
+}
+
+.success {
+  color: $success-color;
+}
+
+// Animations
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
