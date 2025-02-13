@@ -142,7 +142,6 @@ corrosion_data.head(3)
 
 ```{julia}
 #| output: false
-
 using CSV, DataFrames
 
 corrosion_data = CSV.read("../../data/corrosion.csv", DataFrame)
@@ -221,7 +220,6 @@ end
 `CmdStanR` needs it's input data as a list
 
 ```{r}
-
 prepare_data <- function(df = corrosion_data) {
   df |>
     arrange(anomaly_id, T) |>
@@ -310,6 +308,44 @@ cgr_post = prepare_data().Δc |>
   data -> corrosion_growth(data) |>
   model -> sample(model, NUTS(), 1_000)
 
+```
+
+:::
+
+## taking a look
+
+:::{.panel-tabset}
+
+## `R`
+
+```{r}
+#| eval: false
+?cmdstanr::draws()
+```
+
+![](../../figures/draws_help.png)
+
+```{r}
+cgr_post$draws(format = "df")
+```
+
+```{r}
+DomDF::tidy_mcmc_draws(cgr_post, params = c("mu", "sigma"))
+```
+
+## `Python`
+```{python}
+cgr_post.draws()
+```
+
+```{python}
+cgr_post.draws_pd()
+```
+
+## `Julia`
+
+```{julia}
+cgr_post |> DataFrame
 ```
 
 :::
