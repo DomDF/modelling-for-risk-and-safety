@@ -1,6 +1,6 @@
 # probabilistic programming workshop
 
-some introductory `quarto` slides on probabilistic modelling workflows:
+some introductory `quarto` slides on probabilistic modelling workflows, with a focus on `Stan` (https://mc-stan.org) and `Turing` (https://turinglang.org/docs/getting-started/index.html)
 
 The below links direct you to the subfolders in this repo, for each topic.
 A .html file can be downloaded from each folder, which should open in your browser
