@@ -16,7 +16,7 @@ model {
   }
   /*
   //alternative (vectorised) implementation:
-  delta_C ~ normal(mu, sigma);
+  cgr ~ normal(mu, sigma);
 
   //some suggested priors
   mu ~ normal(1/4, 3);
@@ -26,11 +26,12 @@ model {
 }
 
 generated quantities {
-  vector[n_anomalies * n_inspections] cgr_pred;
-  //vector[n_anomalies * n_inspections] log_lik;
+  /*
+  vector[n_anomalies * n_inspections] log_lik;
+  real cgr_pred = normal_rng(mu, sigma);
 
   for (i in 1:(n_anomalies * n_inspections)) {
-    cgr_pred[i] = normal_rng(mu, sigma);
-    //log_lik[i] = normal_lpdf(delta_C[i] | mu, sigma);
+    log_lik[i] = normal_lpdf(delta_C[i] | mu, sigma);
   }
+  */
 }

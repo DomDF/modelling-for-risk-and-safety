@@ -344,8 +344,6 @@ pod_2d_model$format()
 
 ## running and scoring
 ```{r}
-#| echo: false
-
 model_data_2d <- list(
   n_trials = nrow(poi_data),
   depth = poi_data$depth_mm,
@@ -361,6 +359,10 @@ pod_2d_fit <- pod_2d_model$sample(
   iter_sampling = 2000,
   seed = 231123
 )
+```
+
+```{r}
+#| echo: false
 
 get_loo_score_table <- function(model){
   loo_res <- model$loo()

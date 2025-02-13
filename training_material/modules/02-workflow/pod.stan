@@ -11,8 +11,8 @@ parameters {
 
 model {
   // priors
-  alpha ~ normal(-6, sqrt(2));
-  beta_depth ~ normal(1.5, sqrt(0.5));
+  alpha ~ normal(-6, 2);
+  beta_depth ~ normal(1.5, 0.5);
   
   // likelihood
   indication ~ bernoulli_logit(alpha + beta_depth * depth);
