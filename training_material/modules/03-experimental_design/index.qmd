@@ -320,6 +320,10 @@ post_pred = pl.from_pandas(df_long)
 
 ## expected information gain
 
+![can be computationally intensive](../../figures/coding.png)
+
+## expected information gain
+
  - quantify uncertainty in posterior predictions
  - identify prospetive data collection options
  - generate all possible outcome scenarios
