@@ -13,3 +13,5 @@ A .html file can be downloaded from each folder, which should open in your brows
     https://github.com/DomDF/modelling-for-risk-and-safety/tree/master/training_material/modules/02-workflow
  3. experimental design: 
     https://github.com/DomDF/modelling-for-risk-and-safety/tree/master/training_material/modules/03-experimental_design
+
+![example slide](https://github.com/DomDF/modelling-for-risk-and-safety/blob/master/training_material/figures/example_slide.png)
