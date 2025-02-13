@@ -78,6 +78,38 @@ Sys.setenv(JULIA_NUM_THREADS = "8")
 
 StanCon anyone?
 
+## PPLs
+
+'democratising scalable UQ' ...once installed :thinking:
+
+:::{.panel-tabset}
+
+## `Stan` (via `CmdStanR`)
+
+```{r}
+library(cmdstanr)
+
+cmdstanr::cmdstan_version()
+```
+
+## `Stan` (via `CmdStanPy`)
+
+```{python}
+import cmdstanpy
+
+cmdstanpy.cmdstan_version()
+```
+
+## `Turing.jl`
+
+```{julia}
+using Turing, Pkg
+
+Pkg.status("Turing")
+```
+
+:::
+
 ## corrosion rates
 
 ![looking for evidence of active corrosion growth](../../figures/corrosion.png)
@@ -120,38 +152,6 @@ first(corrosion_data, 3)
 #| echo: false
 first(corrosion_data, 3)
 
-```
-
-:::
-
-## PPLs
-
-'democratising scalable UQ' ...once installed :thinking:
-
-:::{.panel-tabset}
-
-## `Stan` (via `CmdStanR`)
-
-```{r}
-library(cmdstanr)
-
-cmdstanr::cmdstan_version()
-```
-
-## `Stan` (via `CmdStanPy`)
-
-```{python}
-import cmdstanpy
-
-cmdstanpy.cmdstan_version()
-```
-
-## `Turing.jl`
-
-```{julia}
-using Turing, Pkg
-
-Pkg.status("Turing")
 ```
 
 :::

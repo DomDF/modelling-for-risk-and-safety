@@ -47,6 +47,579 @@ knowing what we know, where and when should we plan to next collect data?
 
 ![planning the next test](../../figures/discussion.png)
 
-## a survival model
+## survival analysis
+
+:::{.panel-tabset}
+
+## `CmdStanR`
+
+```{r}
+library(cmdstanr)
+
+survival_model <- cmdstan_model(stan_file = "survival.stan")
+survival_model$format()
+```
+
+## `CmdStanPy`
+
+```{python}
+import cmdstanpy
+
+survival_model = cmdstanpy.CmdStanModel(stan_file = "survival.stan")
+stan_code = survival_model.code()
+
+from pygments import highlight
+from pygments.lexers import StanLexer
+from pygments.formatters import NullFormatter
+
+formatted_stan_code = highlight(stan_code, StanLexer(), NullFormatter())
+
+print(formatted_stan_code)
+```
+
+## `Turing.jl`
+
+```{julia}
+using Turing
+using LogExpFunctions: log1mexp
+
+include("../../data/LogLogisticDistribution.jl")
+
+@model function loglogistic_survival(
+    obs_time::Vector{Float64},     # time of observation
+    fail_lb::Vector{Float64},      # lower bound of failure time
+    fail_ub::Vector{Float64},      # upper bound of failure time
+    fail_status::Vector{Int}   # 0 if right-censored, 1 if interval-censored
+)
+    # Priors
+    scale ~ Normal(8, 3) |> d -> truncated(d, lower = 0)
+    shape ~ Normal(6, 3) |> d -> truncated(d, lower = 0)
+
+    # Create distribution with current parameters
+    d = LogLogisticDistribution(scale, shape)
+
+    # Likelihood
+    for i in eachindex(obs_time)
+        if fail_status[i] == 0
+            # Right censored: P(T > obs_time)
+            Turing.@addlogprob! log(survival(d, obs_time[i]))
+        else
+            # Interval censored: P(lb < T < ub)
+            Turing.@addlogprob! log(
+                cdf(d, fail_ub[i]) - cdf(d, fail_lb[i])
+            )
+        end
+    end
+end
 
 
+
+```
+
+:::
+
+## survival analysis
+
+:::{.panel-tabset}
+## `CmdStanR`
+
+```{r}
+library(tidyverse)
+
+failure_data <- read_csv("../../data/failures.csv")
+
+model_data <- list(
+  n_meas = nrow(failure_data),
+  obs_time = rep(12, nrow(failure_data)),
+  fail_lb = failure_data$fail_lb,
+  fail_ub = failure_data$fail_ub,
+  fail_status = is.finite(failure_data$fail_ub) |> as.integer(),
+  n_pred = 100,
+  pred_time = seq(from = 0, to = 20, length.out = 100)
+)
+
+survival_fit <- survival_model$sample(
+  data = model_data,
+  chains = 4,
+  parallel_chains = parallel::detectCores(),
+  seed = 231123,
+  iter_warmup = 2000,
+  iter_sampling = 2000
+)
+
+survival_fit$summary()
+
+```
+
+## `CmdStanPy`
+
+```{python}
+import polars as pl, numpy as np
+import multiprocessing
+
+failure_data = pl.read_csv("../../data/failures.csv").with_columns([
+    pl.col("fail_ub").cast(pl.Float64),
+    pl.col("fail_lb").cast(pl.Float64)
+])
+
+# Define a large finite number to substitute for infinity.
+large_num = 1e10
+
+# Convert the fail_ub array from the failure_data, and replace inf values.
+fail_ub = failure_data["fail_ub"].to_numpy().copy()
+fail_ub[~np.isfinite(fail_ub)] = large_num
+
+# Prepare your model_data dictionary.
+model_data = {
+    "n_meas": failure_data.shape[0],
+    "obs_time": [12] * failure_data.shape[0],
+    "fail_lb": failure_data["fail_lb"].to_numpy(),
+    "fail_ub": fail_ub,
+    "fail_status": (failure_data["fail_ub"].is_finite().cast(pl.Int64)).to_numpy(),
+    "n_pred": 100,
+    "pred_time": np.linspace(start=0, stop=20, num=100)
+}
+
+survival_fit = survival_model.sample(
+  data = model_data,
+  chains = 4,
+  parallel_chains = 1,
+  seed = 231123,
+  iter_warmup = 2000,
+  iter_sampling = 2000
+)
+
+survival_fit.summary()
+
+```
+
+```{python}
+#| echo: false
+def process_mcmc_draws(fit, param_names):
+    draws = fit.draws()
+    
+    pred_times = model_data['pred_time']
+    
+    chains = []; iterations = []; parameters = []; values = []; times = []
+    
+    n_chains, n_iterations, n_params = draws.shape
+    
+    pred_indices = slice(-len(pred_times), None)
+    
+    for chain in range(n_chains):
+        for iteration in range(n_iterations):
+            for i, time in enumerate(pred_times):
+                chains.append(chain + 1)
+                iterations.append(iteration + 1)
+                parameters.append(f"p_fail_pred[{i+1}]")
+                values.append(draws[chain, iteration, pred_indices][i])
+                times.append(time)
+    
+    return pl.DataFrame({
+        "Chain": chains,
+        "Iteration": iterations,
+        "Parameter": parameters,
+        "value": values,
+        "time": times
+    })
+```
+
+## `Turing.jl`
+
+```{julia}
+#| output: false
+using CSV, DataFrames
+
+failure_data = CSV.read("../../data/failures.csv", DataFrame)
+
+survival_fit = loglogistic_survival(
+    repeat([12.0], nrow(failure_data)),
+    failure_data.fail_lb,
+    failure_data.fail_ub,
+    isfinite.(failure_data.fail_ub) |> x -> Int.(x)
+) |> model -> sample(MersenneTwister(231123), model, NUTS(), MCMCThreads(), 2000, 4)
+
+```
+
+```{julia}
+#| echo: false
+
+survival_fit
+
+```
+
+:::
+
+## expected information gain
+
+
+```{r}
+#| echo: false
+
+params <- survival_fit$metadata()$model_params
+
+dist_params <- params[grep(pattern = "scale|shape", x = params)]
+pred_params <- params[grep(pattern = "pred", x = params)]
+
+post_pred <- survival_fit |>
+  DomDF::tidy_mcmc_draws(params = pred_params) |>
+  mutate(time = rep(x = model_data$pred_time, 
+                    each = survival_fit$metadata()$iter_sampling * length(survival_fit$metadata()$id)))
+
+post_plot <- ggplot(data = post_pred, mapping = aes(x = time, y = value))+
+  stat_density2d(
+    geom = "raster", contour = FALSE, n = 100,
+    aes(fill = after_stat(density))
+  )+
+  scale_fill_viridis_c()+
+  scale_x_continuous(limits = c(0, 20), breaks = scales::pretty_breaks())+
+  labs(x = "time, years", y = "probability of failure", fill = "probability \ndensity")+
+  theme_minimal(base_family = "Atkinson Hyperlegible", base_size = 14)+
+  theme(legend.position = "top")+
+  guides(
+    fill = guide_colorbar(
+      barwidth = 15,
+      barheight = 2,
+      title.position = "left")
+  )
+
+  post_plot
+
+```
+
+```{python}
+#| echo: false
+import pandas as pd
+
+params = survival_fit.column_names
+
+pred_params = [p for p in params if "p_fail_pred" in p]
+
+draws_df = survival_fit.draws_pd(vars="p_fail_pred")
+
+n_chains = survival_fit.chains
+n_draws = survival_fit.num_draws_sampling
+
+draws_df['Chain'] = [chain for chain in range(1, n_chains + 1) for _ in range(n_draws)]
+draws_df['Iteration'] = list(range(1, n_draws + 1)) * n_chains
+
+df_long = draws_df.melt(id_vars=['Chain', 'Iteration'],
+                        var_name='Parameter',
+                        value_name='value')
+
+mapping_df = pd.DataFrame({
+    "Parameter": [f"p_fail_pred[{i}]" for i in range(1, 101)],
+    "time": model_data["pred_time"]  # should be a list/array of 100 time values
+})
+
+df_long = df_long.merge(mapping_df, on='Parameter', how='left')
+
+post_pred = pl.from_pandas(df_long)
+
+```
+
+## expected information gain
+
+ - quantify uncertainty in posterior predictions
+ - identify prospetive data collection options
+ - generate all possible outcome scenarios
+   - here (helpfully): failure or no failure
+ - for each outcome:
+   - simpulate the data collection and re-fit the model
+   - quantify uncertainty in the new posterior predictions
+   - find the difference (reduction in uncertainty with the new data)
+   - weight the reduction by the probability of the outcome
+ - compare the expected "information gain" to rank order data collection options
+
+## measures of uncertainty
+
+ - entropy?
+ - log-likelihood?
+ - kernel density estimation?
+ - variance?
+
+:::{.panel-tabset}
+
+## `R`
+```{r}
+post_pred |> head()
+
+estimate_uncertainty <- function(posterior = post_pred) {
+  posterior |>
+    group_by(time) |>
+    summarise(uncertainty_base = var(value))
+}
+
+estimate_uncertainty() |> head()
+
+```
+
+## `Python`
+```{python}
+post_pred.head()
+
+def estimate_uncertainty(posterior=post_pred):
+    # In Polars, we need to use pl.col for column references
+    return (posterior
+            .group_by("time")
+            .agg(uncertainty=pl.col("value").var())
+            .sort("time"))
+
+estimate_uncertainty().head()
+
+```
+
+## `Julia`
+```{julia}
+#| output: false
+#| echo: false
+
+```
+
+:::
+
+## expected information gain
+
+:::{.panel-tabset}
+
+## `R`
+
+```{r}
+estimate_information_gain <- function(proposed_time) {
+  # we need new datasets (hypothesising our next data point)
+  fail_data <- model_data -> no_fail_data
+  
+  # case A: we observe a failure
+  fail_data$n_meas <- fail_data$n_meas + 1
+  fail_data$obs_time <- c(fail_data$obs_time, proposed_time)
+  fail_data$fail_lb <- c(fail_data$fail_lb, proposed_time - 1.5)
+  fail_data$fail_ub <- c(fail_data$fail_ub, proposed_time)
+  fail_data$fail_status <- c(fail_data$fail_status, 1)
+
+  # case B: we do not observe a failure
+  no_fail_data$n_meas <- no_fail_data$n_meas + 1
+  no_fail_data$obs_time <- c(no_fail_data$obs_time, proposed_time)
+  no_fail_data$fail_lb <- c(no_fail_data$fail_lb, proposed_time)
+  no_fail_data$fail_ub <- c(no_fail_data$fail_ub, Inf)
+  no_fail_data$fail_status <- c(no_fail_data$fail_status, 0)
+
+  # re-fitting our models for each possible outcome
+  fail_fit <- survival_model$sample(
+    data = fail_data,
+    chains = 4,
+    parallel_chains = parallel::detectCores(),
+    seed = 231123,
+    iter_warmup = 2000,
+    iter_sampling = 2000
+  )
+
+  no_fail_fit <- survival_model$sample(
+    data = no_fail_data,
+    chains = 4,
+    parallel_chains = parallel::detectCores(),
+    seed = 231123,
+    iter_warmup = 2000,
+    iter_sampling = 2000
+  )
+
+  # quantify uncertainty in the new predictions
+  base_uncertainties <- estimate_uncertainty()
+    
+  fail_uncertainties <- fail_fit |>
+    DomDF::tidy_mcmc_draws(params = pred_params) |>
+    mutate(time = rep(x = model_data$pred_time, 
+           each = fail_fit$metadata()$iter_sampling * length(fail_fit$metadata()$id))) |>
+    estimate_uncertainty() |> rename(uncertainty_fail = uncertainty_base)
+    
+  no_fail_uncertainties <- no_fail_fit |>
+    DomDF::tidy_mcmc_draws(params = pred_params) |>
+    mutate(time = rep(x = model_data$pred_time, 
+           each = no_fail_fit$metadata()$iter_sampling * length(no_fail_fit$metadata()$id))) |>
+    estimate_uncertainty() |> rename(uncertainty_no_fail = uncertainty_base)
+    
+  # what are the prior probabilities of each outcome?
+  p_fail <- post_pred |>
+    filter(abs(time - proposed_time) == min(abs(time - proposed_time))) |>
+    summarise(p = mean(value)) |>
+    pull(p)
+    
+  information_gains <- base_uncertainties |>
+    left_join(fail_uncertainties, by = "time") |>
+    left_join(no_fail_uncertainties, by = "time") |>
+    mutate(
+      # calculate a weighted uncertainty reduction
+      weighted_reduction = pmax(0, (uncertainty_base - uncertainty_fail)) * p_fail +
+                           pmax(0, (uncertainty_base - uncertainty_no_fail)) * (1 - p_fail)
+
+    )
+    
+  # return the expected information gain
+  return(information_gains$weighted_reduction |> sum())
+}
+
+```
+
+## `Python`
+
+```{python}
+import copy
+
+def estimate_information_gain(proposed_time):
+  fail_data = copy.deepcopy(model_data)
+  no_fail_data = copy.deepcopy(model_data)
+  
+  fail_data["obs_time"] = model_data["obs_time"].tolist() if hasattr(model_data["obs_time"], "tolist") else list(model_data["obs_time"])
+  fail_data["fail_lb"]   = model_data["fail_lb"].tolist() if hasattr(model_data["fail_lb"], "tolist") else list(model_data["fail_lb"])
+  fail_data["fail_ub"]   = model_data["fail_ub"].tolist() if hasattr(model_data["fail_ub"], "tolist") else list(model_data["fail_ub"])
+  fail_data["fail_status"] = model_data["fail_status"].tolist() if hasattr(model_data["fail_status"], "tolist") else list(model_data["fail_status"])
+
+  no_fail_data["obs_time"] = model_data["obs_time"].tolist() if hasattr(model_data["obs_time"], "tolist") else list(model_data["obs_time"])
+  no_fail_data["fail_lb"]   = model_data["fail_lb"].tolist() if hasattr(model_data["fail_lb"], "tolist") else list(model_data["fail_lb"])
+  no_fail_data["fail_ub"]   = model_data["fail_ub"].tolist() if hasattr(model_data["fail_ub"], "tolist") else list(model_data["fail_ub"])
+  no_fail_data["fail_status"] = model_data["fail_status"].tolist() if hasattr(model_data["fail_status"], "tolist") else list(model_data["fail_status"])
+
+  fail_data["n_meas"] = model_data["n_meas"] + 1
+  fail_data["obs_time"].append(proposed_time)
+  fail_data["fail_lb"].append(proposed_time - 1.5)
+  fail_data["fail_ub"].append(proposed_time)
+  fail_data["fail_status"].append(1)
+
+  no_fail_data["n_meas"] = model_data["n_meas"] + 1
+  no_fail_data["obs_time"].append(proposed_time)
+  no_fail_data["fail_lb"].append(proposed_time)
+  no_fail_data["fail_ub"].append(large_num)  
+  no_fail_data["fail_status"].append(0)
+    
+  fail_fit = survival_model.sample(
+    data = fail_data,
+    chains = 4,
+    parallel_chains = multiprocessing.cpu_count(),
+    seed = 231123,
+    iter_warmup = 2000,
+    iter_sampling = 2000
+  )
+  
+  no_fail_fit = survival_model.sample(
+    data = no_fail_data,
+    chains = 4,
+    parallel_chains = multiprocessing.cpu_count(),
+    seed = 231123,
+    iter_warmup = 2000,
+    iter_sampling = 2000
+  )
+    
+  window = 2.0
+  
+  base_uncertainties = (
+    post_pred
+    .filter(abs(pl.col("time") - proposed_time) <= window)
+    .group_by("time")
+    .agg(uncertainty_base=pl.col("value").var())
+    .sort("time")
+  )
+
+  fail_post = (
+    process_mcmc_draws(fail_fit, pred_params)
+    .filter((pl.col("time") - proposed_time).abs() <= window)
+    .group_by("time")
+    .agg(pl.col("value").var().alias("uncertainty_fail"))
+    .sort("time")
+  )
+  
+  no_fail_post = (
+    process_mcmc_draws(no_fail_fit, pred_params)
+    .filter((pl.col("time") - proposed_time).abs() <= window)
+    .group_by("time")
+    .agg(pl.col("value").var().alias("uncertainty_no_fail"))
+    .sort("time")
+  )
+    
+  min_diff = (
+    post_pred
+    .select((pl.col("time") - proposed_time).abs().alias("diff"))
+    .select(pl.col("diff").min())
+    .item()
+  )
+    
+  p_fail = (
+    post_pred
+    .filter((pl.col("time") - proposed_time).abs() == min_diff)
+    .select(pl.col("value").mean().alias("p"))
+    .item()
+  )
+    
+  information_gains = (
+    base_uncertainties
+    .join(fail_post, on="time", how="left")
+    .join(no_fail_post, on="time", how="left")
+    .with_columns(
+        weighted_reduction=(
+            pl.when(pl.col("uncertainty_base") - pl.col("uncertainty_fail") > 0)
+              .then(pl.col("uncertainty_base") - pl.col("uncertainty_fail"))
+              .otherwise(0) * p_fail +
+            pl.when(pl.col("uncertainty_base") - pl.col("uncertainty_no_fail") > 0)
+              .then(pl.col("uncertainty_base") - pl.col("uncertainty_no_fail"))
+              .otherwise(0) * (1 - p_fail)
+        )
+    )
+  )
+    
+  # Return the total information gain (sum over weighted_reduction)
+  total_gain = information_gains.select(pl.col("weighted_reduction")).sum().item()
+  return total_gain
+
+```
+
+## `Julia`
+
+```{julia}
+#| echo: false
+```
+
+:::
+
+## expected information gain
+
+```{r}
+#| echo: false
+#| output: false
+
+t_prop <- seq(from = 5, to = 19, by = 2)
+
+ig_tbl <- tibble(
+  time_proposed = t_prop
+) |>
+  mutate(information_gain = purrr::map_dbl(time_proposed, estimate_information_gain)) |>
+  mutate(ig_se = information_gain / sqrt(survival_fit$metadata()$iter_sampling * length(survival_fit$metadata()$id))) 
+
+ig_plot <- ggplot(data = ig_tbl, mapping = aes(x = time_proposed, y = information_gain))+
+  geom_pointrange(fill = "white", size = 1/2,
+                  mapping = aes(ymin = information_gain - 3 * ig_se, ymax = information_gain + 3 * ig_se,
+                                shape = "expected IG ± 3 s.e."))+
+  scale_shape_manual(values = c(21))+
+  scale_x_continuous(limits = c(0, 20), breaks = scales::pretty_breaks())+
+  labs(x = "time, years", y = "expected information gain", shape = "")+
+  theme_minimal(base_family = "Atkinson Hyperlegible", base_size = 14)+
+  theme(legend.position = "top")
+```
+
+```{r}
+#| echo: false
+post_plot
+```
+
+```{r}
+#| echo: false
+ig_plot
+```
+
+## experimental design
+
+  - what do we want to achieve with data collection?
+    - reduce uncertainty in predictions?
+    - test a hypothesis?
+    - support decision-making? (see "value of information analysis")
+
+## break? {.text-center}
+
+![:coffee:](../../figures/coffee_break.png)

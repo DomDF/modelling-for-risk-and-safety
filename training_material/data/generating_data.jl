@@ -3,6 +3,9 @@ using CSV # for reading and writing files
 using DataFrames, DataFramesMeta, CategoricalArrays # for data manipulation
 
 include("useful_functions.jl")
+include("LogLogisticDistribution.jl")
+
+cd(@__DIR__)
 
 #########################################
 #
@@ -87,5 +90,54 @@ CSV.read("poi.csv", DataFrame) |>
                      xlabel = "Depth (mm)",
                      ylabel = "Indication?")  
 
-# Survival analysis
 
+#########################################
+#
+# survival analysis
+#
+#########################################
+
+# True parameter values - chosen to be realistic for industrial equipment
+true_α = 10    # scale parameter (median lifetime)
+true_β = 6    # shape parameter (increasing hazard rate)
+
+# Simulation parameters
+n_samples = 20              # number of components to simulate
+inspection_interval = 1.5    # time between inspections
+max_time = 12              # maximum observation time
+
+# Generate true failure times
+d = LogLogisticDistribution(true_α, true_β)
+true_failures = rand(d, n_samples)
+
+# Create inspection times
+inspection_times = 0:inspection_interval:max_time
+
+# Function to find the bracketing inspection times
+function find_inspection_bounds(failure_time, inspection_times)
+    if failure_time > maximum(inspection_times)
+        return (maximum(inspection_times), Inf)
+    end
+    
+    for (t1, t2) in zip(inspection_times[1:end-1], inspection_times[2:end])
+        if t1 <= failure_time < t2
+            return (t1, t2)
+        end
+    end
+    
+    return (0.0, inspection_times[1])
+end
+
+# Create DataFrame with the simulated data
+DataFrame(
+    component_id = 1:n_samples,
+    true_failure_time = true_failures
+) |>
+    df -> @rtransform(df,
+        :bounds = find_inspection_bounds(:true_failure_time, inspection_times)) |>
+    df -> @rtransform(df,
+        :fail_lb = first(:bounds),
+        :fail_ub = last(:bounds)
+        ) |>
+    df -> @select(df, :component_id, :fail_lb, :fail_ub) |>
+    df -> CSV.write("failures.csv", df)
