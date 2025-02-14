@@ -12,8 +12,6 @@ A .html file can be downloaded from each folder, which should open in your brows
  3. experimental design: 
     https://github.com/DomDF/modelling-for-risk-and-safety/tree/master/training_material/modules/03-experimental_design
 
-![navigate to a presentation file, then click here](https://github.com/DomDF/modelling-for-risk-and-safety/blob/master/training_material/figures/save_presentations.png)
 
-![example slide](https://github.com/DomDF/modelling-for-risk-and-safety/blob/master/training_material/figures/example_slide.png)
+https://github.com/user-attachments/assets/9152c46c-b0e1-4033-8020-54607fe688ae
 
-![up and running with ppls](https://github.com/DomDF/modelling-for-risk-and-safety/blob/master/training_material/figures/coding.png)
