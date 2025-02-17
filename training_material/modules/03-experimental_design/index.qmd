@@ -80,7 +80,7 @@ print(formatted_stan_code)
 ## `Turing.jl`
 
 ```{julia}
-using Turing
+using Turing, Random
 using LogExpFunctions: log1mexp
 
 include("../../data/LogLogisticDistribution.jl")
@@ -112,8 +112,6 @@ include("../../data/LogLogisticDistribution.jl")
     end
 end
 
-
-
 ```
 
 :::
@@ -134,8 +132,8 @@ model_data <- list(
   fail_lb = failure_data$fail_lb,
   fail_ub = failure_data$fail_ub,
   fail_status = is.finite(failure_data$fail_ub) |> as.integer(),
-  n_pred = 100,
-  pred_time = seq(from = 0, to = 20, length.out = 100)
+  n_pred = 101,
+  pred_time = seq(from = 0, to = 20, length.out = 101)
 )
 
 survival_fit <- survival_model$sample(
@@ -162,22 +160,19 @@ failure_data = pl.read_csv("../../data/failures.csv").with_columns([
     pl.col("fail_lb").cast(pl.Float64)
 ])
 
-# Define a large finite number to substitute for infinity.
 large_num = 1e10
 
-# Convert the fail_ub array from the failure_data, and replace inf values.
 fail_ub = failure_data["fail_ub"].to_numpy().copy()
 fail_ub[~np.isfinite(fail_ub)] = large_num
 
-# Prepare your model_data dictionary.
 model_data = {
     "n_meas": failure_data.shape[0],
     "obs_time": [12] * failure_data.shape[0],
     "fail_lb": failure_data["fail_lb"].to_numpy(),
     "fail_ub": fail_ub,
     "fail_status": (failure_data["fail_ub"].is_finite().cast(pl.Int64)).to_numpy(),
-    "n_pred": 100,
-    "pred_time": np.linspace(start=0, stop=20, num=100)
+    "n_pred": 101,
+    "pred_time": np.linspace(start = 0, stop = 20, num = 101)
 }
 
 survival_fit = survival_model.sample(
@@ -228,7 +223,7 @@ def process_mcmc_draws(fit, param_names):
 
 ```{julia}
 #| output: false
-using CSV, DataFrames
+using CSV, DataFrames, DataFramesMeta
 
 failure_data = CSV.read("../../data/failures.csv", DataFrame)
 
@@ -239,23 +234,20 @@ survival_fit = loglogistic_survival(
     isfinite.(failure_data.fail_ub) |> x -> Int.(x)
 ) |> model -> sample(MersenneTwister(231123), model, NUTS(), MCMCThreads(), 2000, 4)
 
+survival_fit
+
 ```
 
 ```{julia}
-#| echo: false
-
+# echo: false
 survival_fit
-
 ```
 
 :::
 
 ## expected information gain
 
-
 ```{r}
-#| echo: false
-
 params <- survival_fit$metadata()$model_params
 
 dist_params <- params[grep(pattern = "scale|shape", x = params)]
@@ -265,7 +257,10 @@ post_pred <- survival_fit |>
   DomDF::tidy_mcmc_draws(params = pred_params) |>
   mutate(time = rep(x = model_data$pred_time, 
                     each = survival_fit$metadata()$iter_sampling * length(survival_fit$metadata()$id)))
+```
 
+```{r}
+#| echo: false
 post_plot <- ggplot(data = post_pred, mapping = aes(x = time, y = value))+
   stat_density2d(
     geom = "raster", contour = FALSE, n = 100,
@@ -288,7 +283,6 @@ post_plot <- ggplot(data = post_pred, mapping = aes(x = time, y = value))+
 ```
 
 ```{python}
-#| echo: false
 import pandas as pd
 
 params = survival_fit.column_names
@@ -307,16 +301,31 @@ df_long = draws_df.melt(id_vars=['Chain', 'Iteration'],
                         var_name='Parameter',
                         value_name='value')
 
+n_preds = len(pred_params)
 mapping_df = pd.DataFrame({
-    "Parameter": [f"p_fail_pred[{i}]" for i in range(1, 101)],
-    "time": model_data["pred_time"]  # should be a list/array of 100 time values
+    "Parameter": pred_params,
+    "time": model_data["pred_time"][:n_preds]
 })
 
 df_long = df_long.merge(mapping_df, on='Parameter', how='left')
 
 post_pred = pl.from_pandas(df_long)
-
 ```
+
+```{julia}
+#| output: false
+pred_times = 0:0.2:20
+
+post_pred = survival_fit |> DataFrame |>
+    df -> @rselect(df, :iteration, :chain, :scale, :shape) |>
+    df -> @rtransform(df, :pr_fail_pred = cdf.(LogLogisticDistribution(:scale, :shape), pred_times)) |>
+    df -> df.pr_fail_pred |>
+    preds -> [getindex.(preds, i) for i in 1:length(pred_times)] |>
+    preds -> DataFrame(
+        pred_time = pred_times, 
+        pr_fail_pred = preds)
+```
+
 
 ## expected information gain
 
@@ -362,8 +371,7 @@ estimate_uncertainty() |> head()
 ```{python}
 post_pred.head()
 
-def estimate_uncertainty(posterior=post_pred):
-    # In Polars, we need to use pl.col for column references
+def estimate_uncertainty(posterior = post_pred):
     return (posterior
             .group_by("time")
             .agg(uncertainty=pl.col("value").var())
@@ -376,8 +384,20 @@ estimate_uncertainty().head()
 ## `Julia`
 ```{julia}
 #| output: false
-#| echo: false
+first(post_pred, 6)
 
+function estimate_uncertainty(posterior::DataFrame = post_pred)
+    posterior |>
+        df -> flatten(df, :pr_fail_pred) |>
+        df -> groupby(df, :pred_time) |>
+        gdf -> combine(gdf, :pr_fail_pred => var => :uncertainty)
+end
+
+```
+
+```{julia}
+#| echo: false
+first(post_pred, 6)
 ```
 
 :::
@@ -577,7 +597,64 @@ def estimate_information_gain(proposed_time):
 ## `Julia`
 
 ```{julia}
-#| echo: false
+#| output: false
+function estimate_information_gain(proposed_time::Float64)
+    
+    new_comp_id = maximum(failure_data.component_id) + 1
+    
+    scenarios = (
+        fail = (
+            data = deepcopy(failure_data) |>
+                    model_data -> push!(model_data, (component_id = new_comp_id, 
+                            fail_lb = proposed_time - 1.5, 
+                            fail_ub = proposed_time)),
+            name = :uncertainty_fail
+        ),
+        no_fail = (
+            data = deepcopy(failure_data) |>
+                    model_data -> push!(model_data, (component_id = new_comp_id, 
+                            fail_lb = proposed_time, 
+                            fail_ub = Inf)),
+            name = :uncertainty_no_fail
+        )
+    )
+    
+    function process_scenario(scenario)
+        observation_times = vcat(repeat([12.0], nrow(failure_data)), [proposed_time])
+        
+        loglogistic_survival(
+            observation_times,
+            scenario.data.fail_lb,
+            scenario.data.fail_ub,
+            isfinite.(scenario.data.fail_ub) |> x -> Int.(x)
+        ) |>
+        model -> sample(MersenneTwister(231123), model, NUTS(), MCMCThreads(), 2000, 4) |>
+        DataFrame |>
+        df -> @rselect(df, :iteration, :chain, :scale, :shape) |>
+        df -> @rtransform(df, :pr_fail_pred = cdf.(LogLogisticDistribution(:scale, :shape), pred_times)) |>
+        df -> df.pr_fail_pred |>
+        preds -> [getindex.(preds, i) for i in 1:length(pred_times)] |>
+        preds -> DataFrame(pred_time = pred_times, pr_fail_pred = preds) |>
+        estimate_uncertainty |>
+        df -> rename(df, :uncertainty => scenario.name)
+    end
+    
+    fail_uncertainties = process_scenario(scenarios.fail)
+    no_fail_uncertainties = process_scenario(scenarios.no_fail)
+    base_uncertainties = estimate_uncertainty()
+    
+    p_fail = post_pred |>
+        df -> @rsubset(df, abs(:pred_time - proposed_time) == 
+                      minimum(abs.(:pred_time .- proposed_time))) |>
+        df -> df.pr_fail_pred |> first |> mean
+    
+    leftjoin(base_uncertainties, fail_uncertainties, on = :pred_time) |>
+        df -> leftjoin(df, no_fail_uncertainties, on = :pred_time) |>
+        df -> @rtransform(df, :weighted_reduction = 
+              max(0, (:uncertainty - :uncertainty_fail)) * p_fail +
+              max(0, (:uncertainty - :uncertainty_no_fail)) * (1 - p_fail)) |>
+        df -> df.weighted_reduction |> sum
+end
 ```
 
 :::

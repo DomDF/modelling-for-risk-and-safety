@@ -177,6 +177,7 @@ cgr_model$format()
 ```
 
 ## `CmdStanPy`
+
 ```{python}
 cgr_model = cmdstanpy.CmdStanModel(stan_file="corrosion_growth.stan")
 
